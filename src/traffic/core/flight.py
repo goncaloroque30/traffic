@@ -1257,6 +1257,65 @@ class Flight(
         """
         return dict((key, getattr(self, key)) for key in attributes)
 
+    @property
+    def anp(self) -> None | str:
+        """
+        Returns the ANP aircraft_id which most closely matches this aircraft,
+        based on the ANP substitutions table (by ICAO code).
+        """
+        from ..data import anp_data
+
+        if subs_tuple := self.anp_substitution:
+            icao_code, variant = subs_tuple
+            return str(
+                anp_data.substitution.loc[
+                    (anp_data.substitution["ICAO_CODE"] == icao_code)
+                    & (anp_data.substitution["AIRCRAFT_VARIANT"] == variant),
+                    "ANP_PROXY",
+                ].iloc[0]
+            )
+        return None
+
+    @property
+    def anp_substitution(self) -> Tuple[str, str] | None:
+        """
+        Returns the ICAO code and aircraft variant which most closely matches
+        this aircraft, based on the ANP substitutions table (by ICAO code).
+
+        The aircraft typecode is used to search the ANP substitutions. If
+        multiple matches are found (more than one substitution for a single
+        ICAO code), the most similar engine description is used.
+
+        For the string comparison, a jaro winkler similarity is used.
+        https://en.wikipedia.org/wiki/Jaro%E2%80%93Winkler_distance
+        """
+        from jarowinkler import jarowinkler_similarity
+
+        from ..data import anp_data
+
+        acft = self.aircraft
+        if acft is None:
+            return None
+
+        candidates = anp_data.substitution.loc[
+            anp_data.substitution["ICAO_CODE"] == acft.typecode, :
+        ].copy()
+        if candidates.empty:
+            return None
+
+        if len(candidates) == 1:
+            return tuple(candidates[["ICAO_CODE", "AIRCRAFT_VARIANT"]].iloc[0])
+
+        # Multiple matches on ICAO code, find the most similar between
+        # aircraft database engines and ANP aircraft variant
+        variants = candidates["AIRCRAFT_VARIANT"].str.lower()
+        scores = variants.apply(
+            lambda acft_var: jarowinkler_similarity(acft_var, acft.engines)
+        )
+        return tuple(
+            candidates[["ICAO_CODE", "AIRCRAFT_VARIANT"]].loc[scores.idxmax()]
+        )  # type: ignore
+
     # -- Time handling, splitting, interpolation and resampling --
 
     def skip(

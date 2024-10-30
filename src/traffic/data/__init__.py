@@ -8,6 +8,7 @@ from .. import cache_dir, config, config_file
 
 if TYPE_CHECKING:
     from .adsb.opensky import OpenSky
+    from .anp.anp import Anp
     from .basic.aircraft import Aircraft
     from .basic.airports import Airports
     from .basic.airways import Airways
@@ -30,6 +31,7 @@ __all__ = [
     "aircraft",
     "airports",
     "airways",
+    "anp_data",
     "navaids",
     "runways",
     "aixm_airports",
@@ -51,6 +53,7 @@ __all__ = [
 aircraft: "Aircraft"
 airports: "Airports"
 airways: "Airways"
+anp_data: "Anp"
 navaids: "Navaids"
 runways: "Runways"
 aixm_airports: "AIXMAirportParser"
@@ -136,6 +139,18 @@ def __getattr__(name: str) -> Any:
         _cached_imports[name] = res
         return res
 
+    if name == "anp_data":
+        from .anp.anp import Anp
+
+        Anp.cache_dir = cache_dir
+
+        anp_path = config.get("anp", "database", fallback=None)
+        subs_path = config.get("anp", "substitution", fallback=None)
+
+        res = Anp(anp_path, subs_path).filter()
+        _cached_imports[name] = res
+        return res
+
     if name == "eurofirs":
         from .eurocontrol.eurofirs import eurofirs
 
@@ -171,9 +186,9 @@ def __getattr__(name: str) -> Any:
         AIXMAirportParser.cache_dir = cache_dir
         res = AIXMAirportParser(
             data=None,
-            aixm_path=Path(aixm_path_str)
-            if aixm_path_str is not None
-            else None,
+            aixm_path=(
+                Path(aixm_path_str) if aixm_path_str is not None else None
+            ),
         )
         _cached_imports[name] = res
         return res
@@ -184,9 +199,9 @@ def __getattr__(name: str) -> Any:
         AIXMAirspaceParser.cache_dir = cache_dir
         res = AIXMAirspaceParser(
             data=None,
-            aixm_path=Path(aixm_path_str)
-            if aixm_path_str is not None
-            else None,
+            aixm_path=(
+                Path(aixm_path_str) if aixm_path_str is not None else None
+            ),
         )
         _cached_imports[name] = res
         return res
