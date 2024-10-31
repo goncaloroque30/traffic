@@ -2253,6 +2253,85 @@ class Flight(
 
     # -- Additional Features --
 
+    def compute_CAS(self) -> Flight:
+        """
+        Compute calibrated airspeed (CAS) for each timestamp.
+
+        This method requires true airspeed (``TAS``), ``pressure`` and
+         ``density`` features.
+        """
+        from .aero import vtas2casw
+
+        if "TAS" not in self.data.columns:
+            raise RuntimeError(
+                "No TAS in trajectory. Consider Flight.compute_TAS()"
+            )
+
+        if any(f not in self.data.columns for f in ["pressure", "density"]):
+            raise RuntimeError(
+                "No weather data in trajectory. "
+                "Consider Flight.compute_weather()."
+            )
+
+        return self.assign(
+            CAS=(
+                vtas2casw(
+                    (self.data["TAS"] * 0.514444).to_numpy(),  # kts to m/s
+                    (self.data["pressure"] * 100).to_numpy(),  # hpa to pa
+                    self.data["density"].to_numpy(),
+                )
+                / 0.514444  # meters/second to knots
+            )
+        )
+
+    def compute_acceleration(self) -> Flight:
+        """
+        Computes the acceleration (m/s^2) at each timestamp as the average of
+        the acceleration at the previous and next segments.
+        """
+
+        return self.assign(
+            acceleration=(
+                self.data["groundspeed"].diff()
+                * 0.514444  # knots to m/s
+                / self.data["timestamp"].diff().dt.seconds
+            )
+            .rolling(2)
+            .mean()
+            .shift(-1)
+            .bfill()
+            .ffill()
+        )
+
+    def compute_climb_angle(self) -> Flight:
+        """
+        Computes the climb angle (°) at each timestamp as the average of the
+        climb angle at the previous and next segments. By convention,
+        positive angles indicate a climb and negative angles a descent.
+        """
+        if "cumdist" not in self.data.columns:
+            raise RuntimeError(
+                "No cumulative distance in trajectory."
+                "Consider Flight.cumulative_distance()"
+            )
+
+        return self.assign(
+            climb_angle=pd.Series(
+                np.degrees(
+                    np.arctan(
+                        self.data["altitude"].diff()
+                        * 0.3048
+                        / (self.data["cumdist"].diff().abs() * 1852.0)
+                    )
+                )
+            )
+            .rolling(2)
+            .mean()
+            .shift(-1)
+            .bfill()
+            .ffill()
+        )
+
     def compute_weather(
         self,
         src: Literal["ISA", "METAR"] = "ISA",

@@ -6,6 +6,8 @@ from .types import array
 
 p0 = 101325.0  # Pa     Sea level pressure ISA
 T0 = 288.15  # K   Sea level temperature ISA
+rho0 = 1.225  # kg/m3  Sea level density ISA
+
 R = 287.05287  # Used in wikipedia table: checked with 11000 m
 beta = -0.0065  # [K/m] ISA temp gradient below tropopause
 Tstrat = 216.65  # K Stratosphere temperature (until alt=22km)
@@ -63,3 +65,12 @@ def vtemp(h: array, Tb: float | array = T0) -> array:  # h [m], Tb [K]
 
 def vtempbase(h: array, t: array) -> array:
     return T0 + t - vtemp(h)
+
+
+def vtas2casw(tas: array, p: array, rho: array) -> array:
+    qdyn = p * ((1.0 + rho * tas * tas / (7.0 * p)) ** 3.5 - 1.0)
+    cas = np.sqrt(7.0 * p0 / rho0 * ((qdyn / p0 + 1.0) ** (2.0 / 7.0) - 1.0))
+
+    # cope with negative speed
+    cas = np.where(tas < 0, -1 * cas, cas)
+    return cas  # type: ignore
