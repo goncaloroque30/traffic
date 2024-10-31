@@ -1729,9 +1729,11 @@ class Flight(
         kwargs_modified: Dict["str", List[Any]] = dict(
             (
                 key,
-                list(value)
-                if any(isinstance(value, x) for x in [list, tuple])
-                else [value],
+                (
+                    list(value)
+                    if any(isinstance(value, x) for x in [list, tuple])
+                    else [value]
+                ),
             )
             for key, value in kwargs.items()
         )
@@ -1846,8 +1848,8 @@ class Flight(
 
             if isinstance(how, str):
                 if how == "interpolate":
-                    interpolable = data.dtypes[data.dtypes != object].index  # noqa: E721
-                    other = data.dtypes[data.dtypes == object].index  # noqa: E721
+                    interpolable = data.dtypes[data.dtypes != object].index
+                    other = data.dtypes[data.dtypes == object].index
                     how = {how: set(interpolable) - {"timestamp"}}
                     how["ffill"] = set(other)
                 else:
@@ -1895,8 +1897,9 @@ class Flight(
     def filter(
         self,
         filter: str | filters.FilterBase = "default",
-        strategy: None
-        | Callable[[pd.DataFrame], pd.DataFrame] = lambda x: x.bfill().ffill(),
+        strategy: (
+            None | Callable[[pd.DataFrame], pd.DataFrame]
+        ) = lambda x: x.bfill().ffill(),
         **kwargs: int | tuple[int],
     ) -> Flight:
         """Filters a trajectory with predefined methods.
@@ -2247,6 +2250,130 @@ class Flight(
             data.wind_v.values,
             **kwargs,
         )
+
+    # -- Additional Features --
+
+    def compute_weather(
+        self,
+        src: Literal["ISA", "METAR"] = "ISA",
+        metar_station: str | None = None,
+        include_wind: bool = False,
+    ) -> Flight:
+        """
+        Enriches the data with temperature, density and pressure columns.
+        Wind features will be included (wind_u and wind_v) if include_wind is
+        set to True (only available if src is "METAR")
+
+        :param src: The source of the weather data. Possible values are:
+            - "ISA": Apply the ISA atmospheric model with standard values.
+            - "METAR": Apply the ISA atmospheric model with non-standard
+            values. The non-standard values are fetch from METAR data. The
+            METAR report closest to each timestamp will be used.
+
+        :param metar_station: The station from which to fetch non-standard
+        values. Mandatory if src is "METAR".
+
+        :param include_wind: If true and source is METAR, wind features will
+        be added.
+        """
+        from .aero import vatmos, vtempbase
+
+        # ISA
+        if src == "ISA":
+            if include_wind:
+                _log.warning(
+                    "Weather from ISA does not include wind data, "
+                    "'include_wind' flag will be ignored."
+                )
+
+            df = self.data
+            df["pressure"], df["density"], df["temperature"] = vatmos(
+                (df["altitude"] * 0.3048).to_numpy()  # feet to meter
+            )
+            df["temperature"] -= 273.15  # kelvin to celsius
+            df["pressure"] /= 100.0  # pascals to hectopascals
+
+            return self.__class__(df)
+
+        # METAR
+        if src == "METAR":
+            from ..data import metars
+
+            if metar_station is None:
+                raise RuntimeError(
+                    "metar_station parameter must be provided "
+                    "when including weather from metars."
+                )
+
+            # Fetch Metars
+            md = metars.fetch(
+                metar_station,
+                self.start - timedelta(hours=1),
+                self.stop + timedelta(hours=1),
+            )
+            if md is None:
+                return self
+
+            df = self.data
+            df["idx"] = df.apply(
+                lambda r: (md.data["valid"] - r["timestamp"]).abs().idxmin(),
+                axis="columns",
+            )
+
+            # Wind
+            if include_wind:
+                md = md.compute_wind()
+                df = df.assign(
+                    wind_u=md.data.loc[df["idx"], "wind_u"].reset_index(
+                        drop=True
+                    ),
+                    wind_v=md.data.loc[df["idx"], "wind_v"].reset_index(
+                        drop=True
+                    ),
+                )
+
+            # Temperature, Pressure and Density
+            df = df.assign(
+                metar_elevation=md.data.loc[df["idx"], "elevation"].reset_index(
+                    drop=True
+                ),
+                metar_temperature=md.data.loc[
+                    df["idx"], "temperature"
+                ].reset_index(drop=True),
+                metar_base_temperature=lambda d: vtempbase(
+                    (d["metar_elevation"] * 0.3048).to_numpy(),  # feet to meter
+                    (
+                        d["metar_temperature"] + 273.15
+                    ).to_numpy(),  # kelvin to celsius
+                ),
+                metar_sea_level_pressure=md.data.loc[
+                    df["idx"], "sea_level_pressure"
+                ].reset_index(drop=True),
+            )
+
+            df["pressure"], df["density"], df["temperature"] = vatmos(
+                (df["altitude"] * 0.3048).to_numpy(),  # feet to meter
+                df["metar_base_temperature"].to_numpy(),
+                (
+                    df["metar_sea_level_pressure"] * 100.0
+                ).to_numpy(),  # hectopascal to pascal
+            )
+
+            df["temperature"] -= 273.15  # kelvin to celsius
+            df["pressure"] /= 100.0  # pascals to hectopascals
+            df = df.drop(
+                columns=[
+                    "idx",
+                    "metar_elevation",
+                    "metar_temperature",
+                    "metar_sea_level_pressure",
+                    "metar_base_temperature",
+                ]
+            )
+
+            return self.__class__(df)
+
+        raise RuntimeError(f"Invalid weather source {src}")
 
     # -- Distances --
 

@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     from .eurocontrol.ddr.routes import NMRoutes
     from .eurocontrol.ddr.so6 import SO6
     from .eurocontrol.eurofirs import Eurofirs
+    from .weather.metar import MetarsIem
 
 # Parse configuration and input specific parameters in below classes
 
@@ -31,7 +32,6 @@ __all__ = [
     "aircraft",
     "airports",
     "airways",
-    "anp_data",
     "navaids",
     "runways",
     "aixm_airports",
@@ -48,12 +48,13 @@ __all__ = [
     "AllFT",
     "Navaids",
     "SO6",
+    "anp_data",
+    "MetarsIem",
 ]
 
 aircraft: "Aircraft"
 airports: "Airports"
 airways: "Airways"
-anp_data: "Anp"
 navaids: "Navaids"
 runways: "Runways"
 aixm_airports: "AIXMAirportParser"
@@ -66,6 +67,8 @@ nm_navaids: "NMNavaids"
 eurofirs: "Eurofirs"
 opensky: "OpenSky"
 client: Client
+anp_data: "Anp"
+metars: "MetarsIem"
 
 
 aixm_path_str = config.get("global", "aixm_path", fallback="")
@@ -136,18 +139,6 @@ def __getattr__(name: str) -> Any:
 
         Airways.cache_dir = cache_dir
         res = Airways()
-        _cached_imports[name] = res
-        return res
-
-    if name == "anp_data":
-        from .anp.anp import Anp
-
-        Anp.cache_dir = cache_dir
-
-        anp_path = config.get("anp", "database", fallback=None)
-        subs_path = config.get("anp", "substitution", fallback=None)
-
-        res = Anp(anp_path, subs_path).filter()
         _cached_imports[name] = res
         return res
 
@@ -275,5 +266,41 @@ def __getattr__(name: str) -> Any:
         from .eurocontrol.ddr.so6 import SO6
 
         return SO6
+
+    if name == "anp_data":
+        from .anp.anp import Anp
+
+        Anp.cache_dir = cache_dir
+
+        anp_path = config.get("anp", "database", fallback=None)
+        subs_path = config.get("anp", "substitution", fallback=None)
+
+        res = Anp(anp_path, subs_path).filter()
+        _cached_imports[name] = res
+        return res
+
+    if name == "metars":
+        from .weather.metar import MetarsIem
+
+        MetarsIem.cache_dir = cache_dir
+        (cache_dir / "metars").mkdir(parents=True, exist_ok=True)
+
+        filename = config.get("weather", "database", fallback="")
+        if filename != "":
+            res = MetarsIem.from_file(filename)
+        else:
+            stations = config.get("weather", "stations", fallback="").replace(
+                " ", ""
+            )
+            if stations != "":
+                stations_list = stations.split(",")
+                start_time = config.get("weather", "start_time", fallback=None)
+                end_time = config.get("weather", "end_time", fallback=None)
+                res = MetarsIem.get(stations_list, start_time, end_time)
+            else:
+                res = MetarsIem()
+
+        _cached_imports[name] = res
+        return res
 
     raise AttributeError(f"module {__name__} has no attribute {name}")
