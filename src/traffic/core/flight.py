@@ -1756,8 +1756,7 @@ class Flight(
                 data.assign(
                     _mark=lambda df: df.last_position
                     != df.shift(1).last_position
-                )
-                .assign(
+                ).assign(
                     latitude=lambda df: df.latitude * df._mark / df._mark,
                     longitude=lambda df: df.longitude * df._mark / df._mark,
                     altitude=lambda df: df.altitude * df._mark / df._mark,
@@ -2284,10 +2283,18 @@ class Flight(
             )
         )
 
-    def compute_acceleration(self) -> Flight:
+    def compute_acceleration(
+        self,
+        min_val: float | None = -5.0 / 1.944,
+        max_val: float | None = 5.0 / 1.944,
+    ) -> Flight:
         """
         Computes the acceleration (m/s^2) at each timestamp as the average of
         the acceleration at the previous and next segments.
+        The values ar clipped to +- 5 kts/m2.
+
+        :param min_val: (default: -5 kts/m2) clip the calculated values by this min.
+        :param max_val: (default: +5 kts/m2) clip the calculated values by this max.
         """
 
         return self.assign(
@@ -2301,6 +2308,7 @@ class Flight(
             .shift(-1)
             .bfill()
             .ffill()
+            .clip(min_val, max_val)
         )
 
     def compute_climb_angle(self) -> Flight:
@@ -3060,8 +3068,7 @@ class Flight(
             return failure()
 
         timestamped_df = (
-            df.sort_values("mintime")
-            .assign(timestamp=lambda df: df.mintime)
+            df.sort_values("mintime").assign(timestamp=lambda df: df.mintime)
             # TODO shouldn't be necessary after pyopensky 2.10
             .convert_dtypes(dtype_backend="pyarrow")
         )
